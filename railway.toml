@@ -1,0 +1,13 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+# Nespouštíme jako permanentní web service - jen jako cron job
+numReplicas = 0
+
+[[crons]]
+name = "morning-brief"
+# 4:00 UTC = 6:00 CEST (letní čas) / 7:00 CET (zimní čas)
+# V zimě změň na "0 5 * * *" pro 6:00 CET
+schedule = "0 4 * * *"
+command = "node agent.js"
