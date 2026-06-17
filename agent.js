@@ -33,25 +33,37 @@ async function updateRailwayVar(name, value) {
 }
 
 async function saveToken(data) {
-  try { fs.writeFileSync(TOKEN_FILE, JSON.stringify(data)); } catch(e) {}
+  try {
+    fs.writeFileSync(TOKEN_FILE, JSON.stringify(data));
+    console.log('[TOKEN] Token ulozen do souboru:', TOKEN_FILE);
+  } catch(e) {
+    console.log('[TOKEN] Zapis do souboru se nezdaril (normalni v cloudu):', e.message);
+  }
   if (IS_CLOUD && process.env.RAILWAY_API_TOKEN && data.refresh_token) {
     try {
       await updateRailwayVar('WHOOP_REFRESH_TOKEN', data.refresh_token);
-      console.log('Railway WHOOP_REFRESH_TOKEN aktualizovan.');
+      console.log('[TOKEN] Railway env var WHOOP_REFRESH_TOKEN aktualizovan.');
     } catch(e) {
-      console.log('Railway env update selhal:', e.message);
+      console.log('[TOKEN] Railway env update selhal:', e.message);
     }
   }
 }
 
 function loadToken() {
   try {
-    if (fs.existsSync(TOKEN_FILE)) return JSON.parse(fs.readFileSync(TOKEN_FILE));
-  } catch(e) {}
-  // Cloud fallback: refresh token ulozeny jako env var
+    if (fs.existsSync(TOKEN_FILE)) {
+      const data = JSON.parse(fs.readFileSync(TOKEN_FILE));
+      console.log('[TOKEN] Nacteno z souboru:', TOKEN_FILE);
+      return data;
+    }
+  } catch(e) {
+    console.log('[TOKEN] Soubor nelze precist:', e.message);
+  }
   if (process.env.WHOOP_REFRESH_TOKEN) {
+    console.log('[TOKEN] Soubor nenalezen - pouzivam WHOOP_REFRESH_TOKEN z env var.');
     return { refresh_token: process.env.WHOOP_REFRESH_TOKEN };
   }
+  console.log('[TOKEN] Zadny token nenalezen (ani soubor, ani env var).');
   return null;
 }
 
@@ -71,13 +83,13 @@ async function getValidToken() {
   const saved = loadToken();
   if (!saved) return null;
   try {
-    console.log('Obnovovani WHOOP tokenu...');
+    console.log('[TOKEN] Obnovovani WHOOP tokenu...');
     const newToken = await refreshWhoopToken(saved.refresh_token);
     await saveToken(newToken);
-    console.log('Token obnoven!');
+    console.log('[TOKEN] Refresh uspesny, novy access_token ziskan.');
     return newToken.access_token;
   } catch(e) {
-    console.log('Refresh selhal.');
+    console.log('[TOKEN] Refresh selhal:', e.response?.status, e.response?.data || e.message);
     return null;
   }
 }
