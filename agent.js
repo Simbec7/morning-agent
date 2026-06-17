@@ -13,46 +13,18 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const RUNNA_ICAL = process.env.RUNNA_ICAL;
 const REDIRECT_URI = process.env.REDIRECT_URI || 'http://localhost:3000/callback';
-const TOKEN_FILE = process.env.TOKEN_FILE || 'C:\\morning-agent\\whoop_token.json';
 const IS_CLOUD = !!process.env.RAILWAY_ENVIRONMENT_NAME;
+const TOKEN_FILE = IS_CLOUD ? '/data/whoop_token.json' : './whoop_token.json';
 
-async function updateRailwayVar(name, value) {
-  const query = `
-    mutation UpsertVariable($input: VariableUpsertInput!) {
-      variableUpsert(input: $input)
-    }
-  `;
-  const variables = {
-    input: {
-      projectId: process.env.RAILWAY_PROJECT_ID,
-      environmentId: process.env.RAILWAY_ENVIRONMENT_ID,
-      serviceId: process.env.RAILWAY_SERVICE_ID,
-      name,
-      value,
-    }
-  };
-  await axios.post('https://backboard.railway.app/graphql/v2',
-    { query, variables },
-    { headers: { Authorization: 'Bearer ' + process.env.RAILWAY_API_TOKEN, 'Content-Type': 'application/json' } }
-  );
-}
+console.log('[TOKEN] Prostredi:', IS_CLOUD ? 'Railway (cloud)' : 'lokalni PC');
+console.log('[TOKEN] Cesta k tokenu:', TOKEN_FILE);
 
-async function saveToken(data) {
+function saveToken(data) {
   try {
     fs.writeFileSync(TOKEN_FILE, JSON.stringify(data));
     console.log('[TOKEN] Token ulozen do souboru:', TOKEN_FILE);
   } catch(e) {
-    console.log('[TOKEN] Zapis do souboru se nezdaril (normalni v cloudu):', e.message);
-  }
-  if (IS_CLOUD && process.env.RAILWAY_API_TOKEN && data.refresh_token) {
-    const rt = data.refresh_token;
-    console.log('[TOKEN] Ukladam refresh_token do Railway, delka:', rt.length, 'prvnich 10 znaku:', rt.substring(0, 10));
-    try {
-      await updateRailwayVar('WHOOP_REFRESH_TOKEN', rt);
-      console.log('[TOKEN] Railway env var WHOOP_REFRESH_TOKEN aktualizovan.');
-    } catch(e) {
-      console.log('[TOKEN] Railway env update selhal:', e.response?.data || e.message);
-    }
+    console.log('[TOKEN] Zapis do souboru se nezdaril:', e.message);
   }
 }
 
@@ -92,7 +64,7 @@ async function getValidToken() {
   try {
     console.log('[TOKEN] Obnovovani WHOOP tokenu...');
     const newToken = await refreshWhoopToken(saved.refresh_token);
-    await saveToken(newToken);
+    saveToken(newToken);
     console.log('[TOKEN] Refresh uspesny, novy access_token ziskan.');
     return newToken.access_token;
   } catch(e) {
@@ -175,7 +147,7 @@ app.get('/callback', async (req, res) => {
     const tokenRes = await axios.post('https://api.prod.whoop.com/oauth/oauth2/token', params, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
-    await saveToken(tokenRes.data);
+    saveToken(tokenRes.data);
     whoopToken = tokenRes.data.access_token;
     res.send('<h2>WHOOP pripojeno! Zavri okno.</h2>');
     setTimeout(runAgent, 1000);
