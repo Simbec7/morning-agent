@@ -3,7 +3,7 @@ builder = "NIXPACKS"
 
 [deploy]
 # Nespouštíme jako permanentní web service - jen jako cron job
-numReplicas = 0
+numReplicas = 1
 
 [[crons]]
 name = "morning-brief"
