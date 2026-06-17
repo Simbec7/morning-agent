@@ -17,17 +17,22 @@ const TOKEN_FILE = process.env.TOKEN_FILE || 'C:\\morning-agent\\whoop_token.jso
 const IS_CLOUD = !!process.env.RAILWAY_ENVIRONMENT_NAME;
 
 async function updateRailwayVar(name, value) {
-  const query = `mutation {
-    variableUpsert(input: {
-      projectId: "${process.env.RAILWAY_PROJECT_ID}",
-      environmentId: "${process.env.RAILWAY_ENVIRONMENT_ID}",
-      serviceId: "${process.env.RAILWAY_SERVICE_ID}",
-      name: "${name}",
-      value: ${JSON.stringify(value)}
-    })
-  }`;
+  const query = `
+    mutation UpsertVariable($input: VariableUpsertInput!) {
+      variableUpsert(input: $input)
+    }
+  `;
+  const variables = {
+    input: {
+      projectId: process.env.RAILWAY_PROJECT_ID,
+      environmentId: process.env.RAILWAY_ENVIRONMENT_ID,
+      serviceId: process.env.RAILWAY_SERVICE_ID,
+      name,
+      value,
+    }
+  };
   await axios.post('https://backboard.railway.app/graphql/v2',
-    { query },
+    { query, variables },
     { headers: { Authorization: 'Bearer ' + process.env.RAILWAY_API_TOKEN, 'Content-Type': 'application/json' } }
   );
 }
@@ -40,11 +45,13 @@ async function saveToken(data) {
     console.log('[TOKEN] Zapis do souboru se nezdaril (normalni v cloudu):', e.message);
   }
   if (IS_CLOUD && process.env.RAILWAY_API_TOKEN && data.refresh_token) {
+    const rt = data.refresh_token;
+    console.log('[TOKEN] Ukladam refresh_token do Railway, delka:', rt.length, 'prvnich 10 znaku:', rt.substring(0, 10));
     try {
-      await updateRailwayVar('WHOOP_REFRESH_TOKEN', data.refresh_token);
+      await updateRailwayVar('WHOOP_REFRESH_TOKEN', rt);
       console.log('[TOKEN] Railway env var WHOOP_REFRESH_TOKEN aktualizovan.');
     } catch(e) {
-      console.log('[TOKEN] Railway env update selhal:', e.message);
+      console.log('[TOKEN] Railway env update selhal:', e.response?.data || e.message);
     }
   }
 }
