@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading Briefing</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 32px 16px;
+  }
+  .container { max-width: 800px; margin: 0 auto; }
+  h1 {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: #f7fafc;
+    letter-spacing: -0.5px;
+  }
+  .subtitle {
+    color: #718096;
+    font-size: 0.9rem;
+    margin-bottom: 32px;
+  }
+  label {
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #a0aec0;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+  }
+  textarea {
+    width: 100%;
+    background: #1a1d2e;
+    border: 1px solid #2d3748;
+    border-radius: 8px;
+    color: #e2e8f0;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    padding: 12px 14px;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  textarea:focus { border-color: #4a5568; }
+  textarea::placeholder { color: #4a5568; }
+
+  .field { margin-bottom: 20px; }
+
+  button#generateBtn {
+    width: 100%;
+    padding: 14px;
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+    margin-top: 8px;
+  }
+  button#generateBtn:hover { opacity: 0.9; }
+  button#generateBtn:active { transform: scale(0.99); }
+  button#generateBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  #status {
+    margin-top: 16px;
+    font-size: 0.85rem;
+    color: #718096;
+    min-height: 20px;
+    text-align: center;
+  }
+  #status.error { color: #fc8181; }
+
+  #result {
+    margin-top: 24px;
+    display: none;
+  }
+  .result-box {
+    background: #1a1d2e;
+    border: 1px solid #2d3748;
+    border-left: 4px solid #4f46e5;
+    border-radius: 8px;
+    padding: 24px;
+    white-space: pre-wrap;
+    line-height: 1.7;
+    font-size: 0.95rem;
+  }
+  .result-header {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #4f46e5;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 12px;
+  }
+
+  /* markdown-like rendering in result */
+  .result-box strong { color: #f7fafc; }
+  .result-box em { color: #a0aec0; }
+
+  .divider {
+    border: none;
+    border-top: 1px solid #2d3748;
+    margin: 28px 0;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📊 Trading Briefing</h1>
+  <p class="subtitle">Generuje personalizovaný briefing z trading journalu, psycho deníku a dnešního plánu.</p>
+
+  <div class="field">
+    <label>Discord — dnešní plán / setupy</label>
+    <textarea id="discordText" rows="7" placeholder="Vlož sem text z Discordu — dnešní náhled, plán, setupy..."></textarea>
+  </div>
+
+  <button id="generateBtn">Vygenerovat briefing</button>
+  <div id="status"></div>
+
+  <div id="result">
+    <hr class="divider">
+    <div class="result-header">Briefing od tvého trading kouče</div>
+    <div class="result-box" id="resultText"></div>
+  </div>
+</div>
+
+<script>
+// ---- Config ---------------------------------------------------------------
+const TRADING_JOURNAL_ID = '1UAoIAgtXOnkcmX92dnU9a2irZUmCS_gyarxS6jsRMIA';
+const PSYCHO_DENIK_ID    = '1cPPTs7ajz3HZzclmo8PCW9ZvC4oA7fgdPEnscbl3d3s';
+
+// We'll fetch a wide range and figure out the structure from headers
+const JOURNAL_RANGE = 'A1:Z200';
+const PSYCHO_RANGE  = 'A1:Z200';
+
+// ---- Helpers ---------------------------------------------------------------
+async function fetchSheet(spreadsheetId, range) {
+  const res = await fetch('/api/sheets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ spreadsheetId, range }),
+  });
+  if (!res.ok) throw new Error(`Sheets API error ${res.status}`);
+  return res.json();
+}
+
+function setStatus(msg, isError = false) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = isError ? 'error' : '';
+}
+
+// Convert sheet values to array-of-objects using first row as headers
+function parseRows(values) {
+  if (!values || values.length < 2) return { headers: [], rows: [] };
+  const headers = values[0].map(h => h.trim());
+  const rows = values.slice(1).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = (row[i] || '').trim(); });
+    return obj;
+  });
+  return { headers, rows };
+}
+
+// Get last N non-empty rows
+function lastRows(rows, n) {
+  const nonempty = rows.filter(r => Object.values(r).some(v => v !== ''));
+  return nonempty.slice(-n);
+}
+
+// Render result box with basic markdown-ish formatting
+function renderResult(text) {
+  const escaped = text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const formatted = escaped
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/^### (.+)$/gm, '<strong style="font-size:1.05rem;color:#a78bfa">$1</strong>')
+    .replace(/^## (.+)$/gm, '<strong style="font-size:1.1rem;color:#c4b5fd">$1</strong>')
+    .replace(/^# (.+)$/gm, '<strong style="font-size:1.2rem;color:#e9d5ff">$1</strong>');
+  document.getElementById('resultText').innerHTML = formatted;
+  document.getElementById('result').style.display = 'block';
+}
+
+// ---- Main ------------------------------------------------------------------
+document.getElementById('generateBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('generateBtn');
+  const discordText = document.getElementById('discordText').value.trim();
+
+  btn.disabled = true;
+  document.getElementById('result').style.display = 'none';
+
+  try {
+    // 1. Fetch sheets
+    setStatus('📥 Stahuji trading journal...');
+    const journalData = await fetchSheet(TRADING_JOURNAL_ID, JOURNAL_RANGE);
+
+    setStatus('📥 Stahuji psycho deník...');
+    const psychoData = await fetchSheet(PSYCHO_DENIK_ID, PSYCHO_RANGE);
+
+    // 2. Log raw data for inspection
+    const journalValues = journalData.values || [];
+    const psychoValues  = psychoData.values  || [];
+
+    console.group('=== TRADING JOURNAL — raw data ===');
+    console.log('Headers:', journalValues[0]);
+    console.log('Last 15 rows:', journalValues.slice(-15));
+    console.groupEnd();
+
+    console.group('=== PSYCHO DENÍK — raw data ===');
+    console.log('Headers:', psychoValues[0]);
+    console.log('Last 15 rows:', psychoValues.slice(-15));
+    console.groupEnd();
+
+    // 3. Parse into structured rows
+    const { headers: jHeaders, rows: jRows } = parseRows(journalValues);
+    const { headers: pHeaders, rows: pRows }  = parseRows(psychoValues);
+
+    console.log('Trading journal headers:', jHeaders);
+    console.log('Psycho deník headers:', pHeaders);
+
+    const recentJournal = lastRows(jRows, 7);
+    const recentPsycho  = lastRows(pRows, 3);
+
+    // 4. Build context strings
+    const journalContext = recentJournal.length
+      ? recentJournal.map(r => JSON.stringify(r)).join('\n')
+      : '(žádná data)';
+
+    const psychoContext = recentPsycho.length
+      ? recentPsycho.map(r => JSON.stringify(r)).join('\n')
+      : '(žádná data)';
+
+    // 5. Call Claude
+    setStatus('🤖 Generuji briefing...');
+
+    const systemPrompt = `Jsi osobní trading kouč. Mluvíš přímo, konkrétně a bez omáčky — jako zkušený mentor, ne motivační speaker. Odpovídáš v češtině.
+
+Tvůj úkol je vygenerovat ranní briefing pro tradera na základě:
+1. Dat z jeho trading journalu (posledních 7 dní)
+2. Posledních záznamů z psycho deníku (serotonin, spánek, nálada/poznámka)
+3. Dnešního plánu/setupů z Discordu
+
+Struktura briefingu (dodržuj v tomto pořadí):
+
+## 📊 Analýza posledních obchodů
+- Cituj konkrétní čísla z journalu (počty obchodů, FOMO flagy, odchylky od plánu, kvalita)
+- Pojmenuj opakující se vzorce (dobré i špatné)
+
+## 🧠 Jedna konkrétní rada na dnes
+- Jediná věc, na kterou se má trader zaměřit — vychází z největšího problému v datech
+- Žádné obecné rady typu "buď disciplinovaný"
+
+## 🟢/🔴 Jsi dnes ve formě na trading?
+- Zhodnoť podle psycho deníku (serotonin, spánek, poznámka)
+- Jasná odpověď: ANO / OPATRNĚ / NE — s krátkým odůvodněním
+
+## 📋 Plán na dnes
+- Krátké shrnutí dnešních setupů z Discordu
+- Připomenutí: dej si vodu a jídlo před open`;
+
+    const userPrompt = `Trading journal — posledních 7 dní (hlavičky: ${jHeaders.join(', ')}):
+${journalContext}
+
+Psycho deník — poslední záznamy (hlavičky: ${pHeaders.join(', ')}):
+${psychoContext}
+
+Dnešní plán z Discordu:
+${discordText || '(nevložen)'}`;
+
+    const res = await fetch('/api/claude', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ system: systemPrompt, user: userPrompt }),
+    });
+
+    if (!res.ok) throw new Error(`Claude API error ${res.status}`);
+    const claudeData = await res.json();
+
+    if (claudeData.error) throw new Error(claudeData.error.message || JSON.stringify(claudeData.error));
+
+    const text = claudeData.content?.[0]?.text;
+    if (!text) throw new Error('Claude nevrátil žádný text: ' + JSON.stringify(claudeData));
+
+    setStatus('');
+    renderResult(text);
+
+  } catch (err) {
+    setStatus('Chyba: ' + err.message, true);
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
